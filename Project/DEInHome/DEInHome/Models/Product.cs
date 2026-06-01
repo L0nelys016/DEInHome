@@ -54,6 +54,8 @@ public partial class Product
         }
     }
 
+    public bool HasDiscount => Discount > 0;
+
     public Bitmap? ProductImage
     {
         get
@@ -68,4 +70,6 @@ public partial class Product
             return new Bitmap(imagePath);
         }
     }
+
+    public string NameCard => $"{Category.Name} | {ProductType.Name}";
 }

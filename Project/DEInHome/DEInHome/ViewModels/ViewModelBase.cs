@@ -7,6 +7,6 @@ namespace DEInHome.ViewModels
     {
         protected VolkovContext _db = new();
 
-        protected User? _loginedUser;
+        protected static User? _loginedUser;
     }
 }

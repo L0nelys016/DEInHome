@@ -11,24 +11,8 @@ namespace DEInHome.ViewModels
 {
     public partial class ProductsViewModel : ViewModelBase
     {
-        private List<Product> _allProduct = null!;
-
-        private Supplier _firstSupplier = new Supplier()
-        {
-            Id = 0,
-            Name = "Все поставщики"
-        };
-
-        private bool _isAscending;
-
         [ObservableProperty]
         private ObservableCollection<Product> _products= null!;
-
-        [ObservableProperty]
-        private ObservableCollection<Supplier> _suppliers = null!;
-
-        [ObservableProperty]
-        private Supplier? _selectedSupplier;
 
         [ObservableProperty]
         private string? _searchText;
@@ -43,7 +27,23 @@ namespace DEInHome.ViewModels
         private string? _userFullName;
 
         [ObservableProperty]
-        private string? _sortedButtonName = "Сортировать";
+        private ObservableCollection<string> _sortedParameters = new()
+        { 
+            "Без сортировки",
+            "По возрастанию (Цена)", 
+            "По убыванию (Цена)",
+            "По возрастанию (Количество)", 
+            "По убыванию (Количество)" 
+        };
+
+        [ObservableProperty]
+        private string? _selectedSortedParameters = "Без сортировки";
+
+        [ObservableProperty]
+        private ObservableCollection<string> _filterParametrs = new() { "Все товары", "0-10.99%", "11-14.99%", "15% и более" };
+
+        [ObservableProperty]
+        private string? _selectedFilterParameters = "Все товары";
 
         public ProductsViewModel()
         {
@@ -52,14 +52,15 @@ namespace DEInHome.ViewModels
 
         private async Task Init()
         {
-            await GetUser();
+            GetUser();
             await LoadProducts();
-            await LoadSuppliers();
         }
 
-        partial void OnSearchTextChanged(string? value) => _ = ApplyFilter();
+        partial void OnSelectedFilterParametersChanged(string? value) => _ = Filter();
 
-        partial void OnSelectedSupplierChanged(Supplier? value) => _ = ApplyFilter();
+        partial void OnSelectedSortedParametersChanged(string? value) => _ = Filter();
+
+        partial void OnSearchTextChanged(string? value) => _ = Filter();
 
         [RelayCommand]
         private void NavigateBack()
@@ -77,7 +78,7 @@ namespace DEInHome.ViewModels
         [RelayCommand]
         private void EditProduct(Product product)
         {
-            MainWindowViewModel.Instance.CurrentViewModel = new AddAndEditProductsViewModel(product);
+            MainWindowViewModel.Instance.CurrentViewModel = new AddAndEditProductsViewModel(product, true);
         }
 
         [RelayCommand]
@@ -88,68 +89,73 @@ namespace DEInHome.ViewModels
             await LoadProducts();
         }
 
-        [RelayCommand]
-        private void ToggleQuantitySorted()
-        {
-            _isAscending = !_isAscending;
-            SortedButtonName = _isAscending ? "По возвростанию" : "По убыванию";
-            ApplySorting();
-        }
-
-        private void ApplySorting()
-        {
-            IEnumerable<Product> sorted = _isAscending
-                ? Products.OrderBy(p => p.Quantity)
-                : Products.OrderByDescending(p => p.Quantity);
-
-            Products = new ObservableCollection<Product>(sorted);
-        }
-
-
         private async Task LoadProducts()
         {
-            _allProduct = await _db.Products
+            List<Product> products = await _db.Products
                 .Include(p => p.Category)
                 .Include(p => p.Manufacture)
                 .Include(p => p.Supplier)
                 .Include(p => p.Unit)
+                .Include(p => p.ProductType)
                 .ToListAsync();
 
-            await ApplyFilter();
+            Products = new ObservableCollection<Product>(products);
         }
 
-        private async Task LoadSuppliers()
+        private async Task Filter()
         {
-            List<Supplier> suppliers = await _db.Suppliers.ToListAsync();
-            Suppliers = [_firstSupplier, .. suppliers];
-            SelectedSupplier = _firstSupplier;
+            List<Product> products = await FilterProduct(SortedProduct(SearchByText(_db.Products))).ToListAsync();
+            Products = new ObservableCollection<Product>(products);
         }
 
-        private async Task ApplyFilter()
+        private IQueryable<Product> SearchByText(IQueryable<Product> productQuery)
         {
-            IEnumerable<Product> query = _allProduct.AsEnumerable();
+            if (string.IsNullOrEmpty(SearchText))
+                return productQuery;
 
-            if (!string.IsNullOrEmpty(SearchText))
+            string lowerSearchText = SearchText.ToLower();
+
+            return productQuery
+                .Where(p => p.Manufacture.Name.ToLower().Contains(lowerSearchText)
+                || p.Category.Name.ToLower().Contains(lowerSearchText)
+                || p.ProductType.Name.ToLower().Contains(lowerSearchText)
+                || p.Supplier.Name.ToLower().Contains(lowerSearchText)
+                || p.Unit.Name.ToLower().Contains(lowerSearchText)
+                || p.Price.ToString().Contains(lowerSearchText)
+                || p.Quantity.ToString().Contains(lowerSearchText)
+                || p.Discount.ToString().Contains(lowerSearchText));
+        }
+
+        private IQueryable<Product> FilterProduct(IQueryable<Product> productQuery)
+        {
+            if(string.IsNullOrEmpty(SelectedFilterParameters) || SelectedFilterParameters == "Все товары")
+                return productQuery;
+
+            return SelectedFilterParameters switch
             {
-                string search = SearchText.ToLower();
-                query = query.Where(p =>
-                p.Category.Name.ToLower().Contains(search)
-                || p.Manufacture.Name.ToLower().Contains(search)
-                || p.Supplier.Name.ToLower().Contains(search)
-                || p.Unit.Name.ToLower().Contains(search)
-                || p.Description!.ToLower().Contains(search)
-                || p.Price.ToString().Contains(search)
-                || p.Discount.ToString().Contains(search)
-                || p.Quantity.ToString().Contains(search));
-            }
-
-            if (SelectedSupplier is not null && SelectedSupplier.Id != 0)
-                query = query.Where(p => p.SupplierId == SelectedSupplier.Id);
-
-            Products = new ObservableCollection<Product>(query);
+                "0-10.99%" => productQuery.Where(p => p.Discount >= 0 && p.Discount <= 11.99),
+                "11-14.99%" => productQuery.Where(p => p.Discount >= 11 && p.Discount <= 14.99),
+                "15% и более" => productQuery.Where(p => p.Discount >= 15),
+                _ => productQuery
+            };
         }
 
-        private async Task GetUser()
+        private IQueryable<Product> SortedProduct(IQueryable<Product> productQuery)
+        {
+            if (string.IsNullOrEmpty(SelectedSortedParameters) || SelectedSortedParameters == "Без сортировки")
+                return productQuery;
+
+            if (SelectedSortedParameters == "По возрастанию (Цена)")
+                return productQuery.OrderBy(p => p.Price);
+            else if (SelectedSortedParameters == "По убыванию (Цена)")
+                return productQuery.OrderByDescending(p => p.Price);
+            else if (SelectedSortedParameters == "По возрастанию (Количество)")
+                return productQuery.OrderBy(p => p.Quantity);
+            else
+                return productQuery.OrderByDescending(p => p.Quantity);
+        }
+
+        private void GetUser()
         {
             if (_loginedUser is null)
             {
@@ -157,19 +163,14 @@ namespace DEInHome.ViewModels
                 return;
             }
 
-            User? user = await _db.Users.FirstOrDefaultAsync(u => u.Id == _loginedUser.Id);
+            UserFullName = _loginedUser.FullName;
 
-            if (user is null)
-                return;
-
-            UserFullName = user.FullName;
-
-            if (user.UserRoleId == 1)
+            if (_loginedUser.UserRoleId == 1)
             {
                 IsVisibleAdmin = true;
                 IsVisibleManager = true;
             }
-            else if (user.UserRoleId == 2)
+            else if (_loginedUser.UserRoleId == 2)
             {
                 IsVisibleAdmin = false;
                 IsVisibleManager = true;

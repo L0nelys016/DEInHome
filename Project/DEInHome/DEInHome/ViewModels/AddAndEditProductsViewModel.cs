@@ -1,10 +1,16 @@
-﻿using Avalonia.Controls;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Notifications;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DEInHome.Models;
 using DEInHome.Services;
+using DEInHome.Views;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace DEInHome.ViewModels
@@ -39,6 +45,12 @@ namespace DEInHome.ViewModels
         private Unit? _selectedUnit = null;
 
         [ObservableProperty]
+        private ObservableCollection<ProductType> _productTypes = null!;
+
+        [ObservableProperty]
+        private ProductType? _selectedProductType = null;
+
+        [ObservableProperty]
         private bool _isEditMode = false;
 
         public AddAndEditProductsViewModel(Product? product, bool isEditMode = false)
@@ -49,30 +61,30 @@ namespace DEInHome.ViewModels
 
         private async Task Init(Product? product)
         {
-            await LoadCategories();
-            await LoadManufactures();
-            await LoadSuppliers();
-            await LoadUnits();
+            await LoadAll();
             await LoadSelectedProduct(product);
         }
 
-        private async Task LoadCategories() =>
-            ProductCategories = await Loader.LoadAsync(_db.ProductCategories);
+        private async Task LoadAll()
+        {
+            List<Manufacture> manufactures = await _db.Manufactures.AsNoTracking().ToListAsync();
+            List<ProductCategory> categories = await _db.ProductCategories.AsNoTracking().ToListAsync();
+            List<ProductType> productTypes = await _db.ProductTypes.AsNoTracking().ToListAsync();
+            List<Supplier> suppliers = await _db.Suppliers.AsNoTracking().ToListAsync();
+            List<Unit> units = await _db.Units.AsNoTracking().ToListAsync();
 
-        private async Task LoadManufactures() =>
-            Manufactures = await Loader.LoadAsync(_db.Manufactures);
-
-        private async Task LoadSuppliers() =>
-            Suppliers = await Loader.LoadAsync(_db.Suppliers);
-
-        private async Task LoadUnits() =>
-            Units = await Loader.LoadAsync(_db.Units);
+            Manufactures = new ObservableCollection<Manufacture>( manufactures );
+            ProductCategories = new ObservableCollection<ProductCategory>( categories );
+            ProductTypes = new ObservableCollection<ProductType>(productTypes);
+            Suppliers = new ObservableCollection<Supplier>( suppliers );
+            Units = new ObservableCollection<Unit>( units );
+        }
 
         private async Task LoadSelectedProduct(Product? product)
         {
             if (product is not null)
             {
-                SelectedProduct = await _db.Products
+                SelectedProduct = await _db.Products.AsNoTracking()
                .Include(p => p.Category)
                .Include(p => p.Manufacture)
                .Include(p => p.Supplier)
@@ -81,10 +93,11 @@ namespace DEInHome.ViewModels
 
                 if (SelectedProduct != null)
                 {
-                    SelectedProductCategory = SelectedProduct.Category;
-                    SelectedManufacture = SelectedProduct.Manufacture;
-                    SelectedSupplier = SelectedProduct.Supplier;
-                    SelectedUnit = SelectedProduct.Unit;
+                    SelectedProductCategory = ProductCategories.FirstOrDefault(p => p.Id == SelectedProduct.CategoryId);
+                    SelectedManufacture = Manufactures.FirstOrDefault(p => p.Id == SelectedProduct.ManufactureId);
+                    SelectedSupplier = Suppliers.FirstOrDefault(p => p.Id == SelectedProduct.SupplierId);
+                    SelectedUnit = Units.FirstOrDefault(p => p.Id == SelectedProduct.UnitId);
+                    SelectedProductType = ProductTypes.FirstOrDefault(p => p.Id == SelectedProduct.ProductTypeId);
                 }
             }
             else
@@ -100,18 +113,27 @@ namespace DEInHome.ViewModels
                 || SelectedProductCategory is null
                 || SelectedManufacture is null
                 || SelectedSupplier is null
-                || SelectedUnit is null)
+                || SelectedUnit is null
+                || SelectedProductType is null)
                 return;
 
             SelectedProduct.CategoryId = SelectedProductCategory.Id;
             SelectedProduct.ManufactureId = SelectedManufacture.Id;
             SelectedProduct.SupplierId = SelectedSupplier.Id;
             SelectedProduct.UnitId = SelectedUnit.Id;
+            SelectedProduct.ProductTypeId = SelectedProductType.Id;
 
             if (IsEditMode)
+            {
                 _db.Products.Update(SelectedProduct);
+                MainWindow.NotificationManager?.Show(new Notification("Успех!", "Продукт изменен", NotificationType.Success));
+            }
             else
+            {
                 await _db.Products.AddAsync(SelectedProduct);
+                MainWindow.NotificationManager?.Show(new Notification("Успех!", "Продукт добавлен", NotificationType.Success));
+            }
+                
 
             await _db.SaveChangesAsync();
 
@@ -127,17 +149,12 @@ namespace DEInHome.ViewModels
         [RelayCommand]
         private async Task SelectedImage()
         {
-            Window? window = Avalonia.Application.Current?.ApplicationLifetime
-                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
-                ? desktop.MainWindow
-                : null;
-
-            if (window is null || SelectedProduct is null)
+            if (Application.Current?.ApplicationLifetime
+                is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } window }
+                || SelectedProduct is null)
                 return;
 
-            var imageName = await ImageService.SelectAndSaveImageAsync(window, SelectedProduct.Image);
-
-            if (imageName is not null)
+            if (await ImageService.SelectAndSaveImageAsync(window, SelectedProduct.Image) is { } imageName)
             {
                 SelectedProduct.Image = imageName;
                 OnPropertyChanged(nameof(SelectedProduct));

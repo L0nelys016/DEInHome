@@ -1,7 +1,17 @@
-﻿namespace DEInHome.ViewModels
+﻿using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace DEInHome.ViewModels
 {
     public partial class MainWindowViewModel : ViewModelBase
     {
-        public string Greeting { get; } = "Welcome to Avalonia!";
+        [ObservableProperty]
+        private ViewModelBase _currentViewModel = new AuthViewModel();
+
+        public static MainWindowViewModel Instance = null!;
+
+        public MainWindowViewModel()
+        {
+            Instance = this;
+        }
     }
 }
